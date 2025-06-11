@@ -1,0 +1,35 @@
+# Unity generated files
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]etadata/
+/[Aa]ssembly-[Cc]Sharp.csproj
+/[Aa]ssembly-[Cc]Sharp-Editor.csproj
+/[Mm]y project.sln
+/[Aa]IDatingShow.sln
+
+# Visual Studio files
+.vs/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.lsb
+*.gh
+
+# Rider
+.idea/
+*.iml
+
+# OS generated files
+.DS_Store
+.Trashes
+Thumbs.db
