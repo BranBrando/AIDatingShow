@@ -57,12 +57,12 @@ public class GameManager : MonoBehaviour
         dialogueText.text = "Welcome to 'Fei Cheng Wu Rao'! You are the male contestant. Let's meet our 5 lovely AI guests.";
 
         aiGuests = new List<AIGuestProfile>();
-        // Create 5 placeholder AI guests for MVP
-        aiGuests.Add(new AIGuestProfile("Alice", 28, "Software Engineer", new List<string> { "coding", "hiking", "sci-fi" }, "analytical, witty, adventurous", "a partner who shares my intellectual curiosity", 0.7f));
-        aiGuests.Add(new AIGuestProfile("Bella", 25, "Artist", new List<string> { "painting", "music", "travel" }, "creative, free-spirited, empathetic", "someone who appreciates art and passion", 0.8f));
-        aiGuests.Add(new AIGuestProfile("Chloe", 30, "Doctor", new List<string> { "reading", "volunteering", "cooking" }, "caring, intelligent, practical", "a stable and supportive relationship", 0.6f));
-        aiGuests.Add(new AIGuestProfile("Daisy", 22, "Student", new List<string> { "gaming", "social media", "fashion" }, "energetic, trendy, playful", "a fun and exciting relationship", 0.9f));
-        aiGuests.Add(new AIGuestProfile("Eve", 33, "Entrepreneur", new List<string> { "business", "networking", "fitness" }, "ambitious, confident, direct", "a driven and independent partner", 0.5f));
+        // Create 5 placeholder AI guests for MVP with initial affection scores (0-100)
+        aiGuests.Add(new AIGuestProfile("Alice", 28, "Software Engineer", new List<string> { "coding", "hiking", "sci-fi" }, "analytical, witty, adventurous", "a partner who shares my intellectual curiosity", 75f)); 
+        aiGuests.Add(new AIGuestProfile("Bella", 25, "Artist", new List<string> { "painting", "music", "travel" }, "creative, free-spirited, empathetic", "someone who appreciates art and passion", 60f));
+        aiGuests.Add(new AIGuestProfile("Chloe", 30, "Doctor", new List<string> { "reading", "volunteering", "cooking" }, "caring, intelligent, practical", "a stable and supportive relationship", 50f));
+        aiGuests.Add(new AIGuestProfile("Daisy", 22, "Student", new List<string> { "gaming", "social media", "fashion" }, "energetic, trendy, playful", "a fun and exciting relationship", 65f)); 
+        aiGuests.Add(new AIGuestProfile("Eve", 33, "Entrepreneur", new List<string> { "business", "networking", "fitness" }, "ambitious, confident, direct", "a driven and independent partner", 40f));
 
         UpdateGuestUI();
 
@@ -177,32 +177,57 @@ public class GameManager : MonoBehaviour
             {
                 string prompt = GeneratePromptForGuest(guest, playerInputText);
                 string aiResponse = await geminiService.GetGeminiResponse(prompt);
-                Debug.Log($"AI Response for {guest.guestName}: {aiResponse}");
-                // Parse AI response for dialogue and light status
-                string guestDialogue = aiResponse;
-                LightStatus newLightStatus = guest.currentLightStatus; // Default to current
+                Debug.Log($"Raw AI Response for {guest.guestName}: {aiResponse}");
+                
+                string guestDialogue = aiResponse; // Default to full response
+                float affectionChange = 0f;
 
-                if (aiResponse.Contains("Light: OFF"))
+                // Parse AI response for dialogue and affection change
+                int affectionChangeIndex = aiResponse.LastIndexOf("\nAffectionChange: ");
+                if (affectionChangeIndex != -1)
                 {
-                    newLightStatus = LightStatus.Off;
-                    guestDialogue = guestDialogue.Replace("Light: OFF", "").Trim();
+                    guestDialogue = aiResponse.Substring(0, affectionChangeIndex).Trim();
+                    string affectionChangeStr = aiResponse.Substring(affectionChangeIndex + "\nAffectionChange: ".Length).Trim();
+                    if (float.TryParse(affectionChangeStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out affectionChange))
+                    {
+                        Debug.Log($"{guest.guestName}: Parsed AffectionChange: {affectionChange}");
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"{guest.guestName}: Could not parse AffectionChange value '{affectionChangeStr}' from AI response: {aiResponse}");
+                    }
                 }
-                else if (aiResponse.Contains("Light: ON"))
+                else
                 {
-                    newLightStatus = LightStatus.On;
-                    guestDialogue = guestDialogue.Replace("Light: ON", "").Trim();
-                }
-                else if (aiResponse.Contains("Light: BURST"))
-                {
-                    newLightStatus = LightStatus.Burst;
-                    guestDialogue = guestDialogue.Replace("Light: BURST", "").Trim();
+                    Debug.LogWarning($"{guest.guestName}: Could not find 'AffectionChange:' in AI response. Defaulting affectionChange to 0. Raw response: {aiResponse}");
                 }
 
-                guest.currentLightStatus = newLightStatus;
-                guest.AddDialogue(guest.guestName, guestDialogue);
-                dialogueText.text += $"\n{guest.guestName}: {guestDialogue} (Light: {guest.currentLightStatus})";
+                guest.UpdateAffection(affectionChange);
+                // guest.UpdateInterestMatch(interestChange); // Call these when implemented
+                // guest.UpdateValuesMatch(valuesChange);   // Call these when implemented
+
+                // Let the guest profile decide its light status based on new scores
+                guest.EvaluateAndSetLightStatus(playerInputText, guestDialogue); 
+
+                guest.AddDialogue(guest.guestName, guestDialogue); // Add the verbal response to history
+                dialogueText.text += $"\n{guest.guestName}: {guestDialogue} (Light: {guest.currentLightStatus})"; // UI shows the new status
             }
         }
+        // Collective Light Off check
+        int lightsOffCount = 0;
+        foreach (var g in aiGuests)
+        {
+            if (g.currentLightStatus == LightStatus.Off)
+            {
+                lightsOffCount++;
+            }
+        }
+
+        if (aiGuests.Count >= 3 && lightsOffCount >= (aiGuests.Count / 2) + 1)
+        {
+            dialogueText.text += "\n\n--- WARNING: Collective Light Off! --- \nMany guests have lost interest. The pressure is on!";
+        }
+
         UpdateGuestUI();
         // After all guests respond, transition to next phase or allow more interaction in current phase
         // For MVP, let's transition after one round of responses
@@ -220,32 +245,57 @@ public class GameManager : MonoBehaviour
             {
                 string prompt = GeneratePromptForGuest(guest, playerInputText);
                 string aiResponse = await geminiService.GetGeminiResponse(prompt);
+                Debug.Log($"Raw AI Response for {guest.guestName}: {aiResponse}");
 
-                // Parse AI response for dialogue and light status
-                string guestDialogue = aiResponse;
-                LightStatus newLightStatus = guest.currentLightStatus; // Default to current
+                string guestDialogue = aiResponse; // Default to full response
+                float affectionChange = 0f;
 
-                if (aiResponse.Contains("Light: OFF"))
+                // Parse AI response for dialogue and affection change
+                int affectionChangeIndex = aiResponse.LastIndexOf("\nAffectionChange: ");
+                if (affectionChangeIndex != -1)
                 {
-                    newLightStatus = LightStatus.Off;
-                    guestDialogue = guestDialogue.Replace("Light: OFF", "").Trim();
+                    guestDialogue = aiResponse.Substring(0, affectionChangeIndex).Trim();
+                    string affectionChangeStr = aiResponse.Substring(affectionChangeIndex + "\nAffectionChange: ".Length).Trim();
+                    if (float.TryParse(affectionChangeStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out affectionChange))
+                    {
+                        Debug.Log($"{guest.guestName}: Parsed AffectionChange: {affectionChange}");
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"{guest.guestName}: Could not parse AffectionChange value '{affectionChangeStr}' from AI response: {aiResponse}");
+                    }
                 }
-                else if (aiResponse.Contains("Light: ON"))
+                else
                 {
-                    newLightStatus = LightStatus.On;
-                    guestDialogue = guestDialogue.Replace("Light: ON", "").Trim();
-                }
-                else if (aiResponse.Contains("Light: BURST"))
-                {
-                    newLightStatus = LightStatus.Burst;
-                    guestDialogue = guestDialogue.Replace("Light: BURST", "").Trim();
+                    Debug.LogWarning($"{guest.guestName}: Could not find 'AffectionChange:' in AI response. Defaulting affectionChange to 0. Raw response: {aiResponse}");
                 }
 
-                guest.currentLightStatus = newLightStatus;
-                guest.AddDialogue(guest.guestName, guestDialogue);
-                dialogueText.text += $"\n{guest.guestName}: {guestDialogue} (Light: {guest.currentLightStatus})";
+                guest.UpdateAffection(affectionChange);
+                // guest.UpdateInterestMatch(interestChange); // Call these when implemented
+                // guest.UpdateValuesMatch(valuesChange);   // Call these when implemented
+
+                // Let the guest profile decide its light status based on new scores
+                guest.EvaluateAndSetLightStatus(playerInputText, guestDialogue);
+
+                guest.AddDialogue(guest.guestName, guestDialogue); // Add the verbal response to history
+                dialogueText.text += $"\n{guest.guestName}: {guestDialogue} (Light: {guest.currentLightStatus})"; // UI shows the new status
             }
         }
+        // Collective Light Off check
+        int lightsOffCount = 0;
+        foreach (var g in aiGuests)
+        {
+            if (g.currentLightStatus == LightStatus.Off)
+            {
+                lightsOffCount++;
+            }
+        }
+
+        if (aiGuests.Count >= 3 && lightsOffCount >= (aiGuests.Count / 2) + 1)
+        {
+            dialogueText.text += "\n\n--- WARNING: Collective Light Off! --- \nMany guests have lost interest. The pressure is on!";
+        }
+
         UpdateGuestUI();
         // After all guests respond, transition to final choice or allow more interaction
         currentPhase = GamePhase.LovesFinalChoice;
@@ -336,13 +386,24 @@ public class GameManager : MonoBehaviour
         promptBuilder.AppendLine($"You are a female contestant on a dating show called 'Fei Cheng Wu Rao'.");
         promptBuilder.AppendLine($"The current phase is '{currentPhase}'.");
         promptBuilder.AppendLine($"Your current light status is '{guest.currentLightStatus}'.");
+        // ADDED: Provide current emotional context to LLM
+        promptBuilder.AppendLine($"Your current affection towards the player is {guest.affectionScore}/100.");
+
         promptBuilder.AppendLine("Here is the conversation history:");
         foreach (string line in guest.dialogueHistory)
         {
             promptBuilder.AppendLine(line);
         }
         promptBuilder.AppendLine($"The male contestant has just said: \"{playerInput}\"");
-        promptBuilder.AppendLine("Based on your persona and the conversation, how do you respond? Also, decide if you will keep your light on, turn it off, or burst your light. State 'Light: ON', 'Light: OFF', or 'Light: BURST' at the end of your response.");
+        
+        // MODIFIED: New instruction for LLM
+        promptBuilder.AppendLine("Based on your persona, the conversation, and your current feelings, how do you respond to the male contestant? ");
+        promptBuilder.AppendLine("In your response, subtly hint at your current level of interest or feelings (e.g., if you are pleased, curious, disappointed, etc.). Do NOT explicitly state 'Light: ON', 'Light: OFF', or 'Light: BURST'. Your dialogue alone should convey your state.");
+        promptBuilder.AppendLine("After your dialogue, on a NEW LINE, provide an estimated change in your affection towards the player based ONLY on this specific interaction. Use the format 'AffectionChange: X.X'.");
+        promptBuilder.AppendLine("If the change is positive, X.X should be a number between 5.0 and 20.0.");
+        promptBuilder.AppendLine("If the change is negative, X.X should be a number between -20.0 and -5.0.");
+        promptBuilder.AppendLine("If the interaction is neutral or the change is less than 5.0 (positive or negative), provide 'AffectionChange: 0.0'.");
+        promptBuilder.AppendLine("For example: 'AffectionChange: 10.0', 'AffectionChange: -7.5', or 'AffectionChange: 0.0'.");
         
         return promptBuilder.ToString();
     }
