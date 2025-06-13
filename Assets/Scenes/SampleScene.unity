@@ -2955,7 +2955,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: Submit
+  m_text: Continue
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
   m_sharedMaterial: {fileID: 2180264, guid: 8f586378b4e144a9851e7b34d9b748ee, type: 2}
@@ -3509,6 +3509,14 @@ MonoBehaviour:
   geminiApiKey: AIzaSyCTbaWNJX-S8W-YMI6jqsO5OrkhS3tfn9g
   currentPhase: 0
   aiGuests: []
+  currentPlayerProfile:
+    playerName: 
+    age: 0
+    occupation: 
+    interests: []
+    personalityTraits: 
+    relationshipExpectations: 
+    fullGeneratedDescription: 
   selectedGuestForFinalChoice:
     guestName: 
     age: 0
@@ -3516,9 +3524,12 @@ MonoBehaviour:
     interests: []
     personalityTraits: 
     relationshipGoals: 
-    initialDisposition: 0
     currentLightStatus: 0
     dialogueHistory: []
+    affectionScore: 0
+    interestMatchScore: 0
+    valuesMatchScore: 0
+    negativeInteractionBuffer: 0
   currentPlayerTurn: 0
   dialogueText: {fileID: 2012834617}
   playerInputField: {fileID: 1404118631}

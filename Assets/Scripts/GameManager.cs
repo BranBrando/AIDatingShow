@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections; // Added for IEnumerator
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Text; // For StringBuilder
@@ -7,6 +8,7 @@ using UnityEngine.UI; // Required for Button component
 
 public enum GamePhase
 {
+    PlayerIntroduction, // New phase
     LovesFirstImpression,
     LovesReassessment,
     LovesFinalChoice,
@@ -21,6 +23,7 @@ public class GameManager : MonoBehaviour
     [Header("Game State")]
     public GamePhase currentPhase;
     public List<AIGuestProfile> aiGuests;
+    public PlayerProfile currentPlayerProfile; // New: Player's AI-generated profile
     public AIGuestProfile selectedGuestForFinalChoice;
     public int currentPlayerTurn = 0; // To track which guest is currently interacting or being addressed
 
@@ -52,23 +55,23 @@ public class GameManager : MonoBehaviour
 
     void InitializeGame()
     {
-        currentPhase = GamePhase.LovesFirstImpression;
-        phaseIndicatorText.text = "Phase: Love's First Impression";
-        dialogueText.text = "Welcome to 'Fei Cheng Wu Rao'! You are the male contestant. Let's meet our 5 lovely AI guests.";
+        currentPhase = GamePhase.PlayerIntroduction; // Changed
+        phaseIndicatorText.text = "Phase: Player Introduction"; // Changed
+        dialogueText.text = "Welcome to 'Fei Cheng Wu Rao'! Generating your contestant profile..."; // Changed
 
-        aiGuests = new List<AIGuestProfile>();
-        // Create 5 placeholder AI guests for MVP with initial affection scores (0-100)
-        aiGuests.Add(new AIGuestProfile("Alice", 28, "Software Engineer", new List<string> { "coding", "hiking", "sci-fi" }, "analytical, witty, adventurous", "a partner who shares my intellectual curiosity", 75f)); 
-        aiGuests.Add(new AIGuestProfile("Bella", 25, "Artist", new List<string> { "painting", "music", "travel" }, "creative, free-spirited, empathetic", "someone who appreciates art and passion", 60f));
-        aiGuests.Add(new AIGuestProfile("Chloe", 30, "Doctor", new List<string> { "reading", "volunteering", "cooking" }, "caring, intelligent, practical", "a stable and supportive relationship", 50f));
-        aiGuests.Add(new AIGuestProfile("Daisy", 22, "Student", new List<string> { "gaming", "social media", "fashion" }, "energetic, trendy, playful", "a fun and exciting relationship", 65f)); 
-        aiGuests.Add(new AIGuestProfile("Eve", 33, "Entrepreneur", new List<string> { "business", "networking", "fitness" }, "ambitious, confident, direct", "a driven and independent partner", 40f));
+        // Initialize AI Guests here, or after player intro. Keeping it here for now.
+        aiGuests = new List<AIGuestProfile>
+        {
+            // Create 5 placeholder AI guests for MVP with initial affection scores (0-100)
+            new AIGuestProfile("Alice", 28, "Software Engineer", new List<string> { "coding", "hiking", "sci-fi" }, "analytical, witty, adventurous", "a partner who shares my intellectual curiosity", 75f),
+            new AIGuestProfile("Bella", 25, "Artist", new List<string> { "painting", "music", "travel" }, "creative, free-spirited, empathetic", "someone who appreciates art and passion", 60f),
+            new AIGuestProfile("Chloe", 30, "Doctor", new List<string> { "reading", "volunteering", "cooking" }, "caring, intelligent, practical", "a stable and supportive relationship", 50f),
+            new AIGuestProfile("Daisy", 22, "Student", new List<string> { "gaming", "social media", "fashion" }, "energetic, trendy, playful", "a fun and exciting relationship", 65f),
+            new AIGuestProfile("Eve", 33, "Entrepreneur", new List<string> { "business", "networking", "fitness" }, "ambitious, confident, direct", "a driven and independent partner", 40f)
+        };
 
-        UpdateGuestUI();
-
-        // Hook up input field and button
+        // Hook up input field and button (will be disabled/enabled by PlayerIntroductionSequence)
         playerInputField.onEndEdit.AddListener(OnPlayerInputEndEdit);
-        // Hook up the submit button's onClick event
         if (submitButton != null)
         {
             Button buttonComponent = submitButton.GetComponent<Button>();
@@ -85,6 +88,9 @@ public class GameManager : MonoBehaviour
         {
             Debug.LogError("SubmitButton reference is null in GameManager.");
         }
+
+        // Start the player introduction process
+        StartCoroutine(PlayerIntroductionSequence()); // New coroutine
     }
 
     void UpdateGuestUI()
@@ -122,6 +128,150 @@ public class GameManager : MonoBehaviour
         }
     }
 
+    private IEnumerator PlayerIntroductionSequence()
+    {
+        // Disable player input during generation
+        playerInputField.gameObject.SetActive(false);
+        if (submitButton != null) submitButton.gameObject.SetActive(false);
+
+        yield return StartCoroutine(GeneratePlayerBackground().AsCoroutine()); // Wait for background to be generated
+
+        dialogueText.text += "\n\n--- Guests' First Impressions ---"; // New header
+        yield return StartCoroutine(ProcessGuestFirstImpressions().AsCoroutine()); // Process guest impressions
+
+        dialogueText.text += "\n\nClick the 'Submit' button (or press Enter) to continue.";
+        // playerInputField should remain disabled as no text input is needed here.
+        // playerInputField.gameObject.SetActive(false); // Already set at the start of the coroutine
+        if (submitButton != null)
+        {
+            submitButton.gameObject.SetActive(true); // Ensure the Submit/Next button is active
+        }
+        // No automatic transition here. OnPlayerSubmit will handle it.
+    }
+
+    private async Task GeneratePlayerBackground()
+    {
+        // 1. Construct the prompt
+        string prompt = "You are an AI assistant for a dating game show called 'Fei Cheng Wu Rao'. " +
+                        "Generate a compelling and interesting background for a male contestant. " +
+                        "The background should be a single paragraph and include: " +
+                        "His approximate age (between 25 and 40), " +
+                        "his profession (choose from diverse fields like tech, arts, science, business, education, etc.), " +
+                        "a couple of his main interests/hobbies, " +
+                        "a key personality trait (e.g., adventurous, thoughtful, humorous, ambitious), " +
+                        "and a brief mention of what he's looking for in a partner. " +
+                        "Make the description sound natural and engaging for a dating show introduction. Do not use placeholders like [Age] or [Profession]. Directly state the generated values. Example: 'Our next contestant is Michael, a 32-year-old software architect who loves rock climbing and playing the guitar. He's known for his witty humor and is hoping to find someone who shares his passion for adventure and a good laugh.'";
+
+        dialogueText.text += "\n\nSystem: Generating your unique profile with AI...";
+        string generatedBackgroundText = await geminiService.GetGeminiResponse(prompt);
+
+        if (generatedBackgroundText.StartsWith("Error:"))
+        {
+            dialogueText.text += $"\n\nSystem: Error generating profile: {generatedBackgroundText}";
+            // Handle error, maybe use a default profile
+            currentPlayerProfile = new PlayerProfile("Default Player", 30, "Adventurer", new List<string>{"Exploring"}, "Curious", "An interesting connection");
+        }
+        else
+        {
+            dialogueText.text += $"\n\n--- Your AI-Generated Profile ---";
+            dialogueText.text += $"\n{generatedBackgroundText}";
+            // For now, store the whole text. Later, parse it into PlayerProfile fields.
+            // This is a simplification. Ideally, the LLM returns structured data or we parse this string.
+            currentPlayerProfile = ParsePlayerBackground(generatedBackgroundText); // Need to implement ParsePlayerBackground
+        }
+    }
+
+    private PlayerProfile ParsePlayerBackground(string backgroundText)
+    {
+        // This is a very basic placeholder.
+        // Ideally, the LLM would provide structured data, or we'd use more robust NLP parsing.
+        // For now, we can try to extract some info or just store the description.
+        // Let's assume the LLM gives a paragraph. We'll need to decide how to populate PlayerProfile fields.
+        // For the MVP, we might just store the full description in PlayerProfile.
+        // Or, we can try to extract some keywords if the prompt is well-defined.
+
+        // Example: if PlayerProfile has a 'fullDescription' field:
+        // return new PlayerProfile { fullDescription = backgroundText };
+
+        // For now, let's create a simple profile with the text as a general description
+        // and try to guess some fields for demonstration. This is NOT robust.
+        string name = "The Contestant"; // Or extract if possible
+        int age = 30; // Default or try to parse
+        string occupation = "To be revealed"; // Default or try to parse
+        List<string> interests = new List<string>(); // Default or try to parse
+        string personality = "Intriguing"; // Default or try to parse
+        string relationshipGoals = "A meaningful connection"; // Default or try to parse
+
+        // Attempt to parse age (very naive)
+        var ageMatch = System.Text.RegularExpressions.Regex.Match(backgroundText, @"\b(\d{2})\b-year-old");
+        if (ageMatch.Success) int.TryParse(ageMatch.Groups[1].Value, out age);
+
+        // This parsing logic needs to be significantly improved or the LLM prompt needs to enforce a structure.
+        // For the initial implementation, we might just have a single "description" field in PlayerProfile.
+        // Let's assume PlayerProfile will have a constructor that takes the full text for now.
+        return new PlayerProfile(name, age, occupation, interests, personality, relationshipGoals, backgroundText);
+    }
+
+    private async Task ProcessGuestFirstImpressions()
+    {
+        foreach (var guest in aiGuests)
+        {
+            string prompt = $"You are {guest.guestName}, a character in a dating show. Your profile: Age {guest.age}, Occupation {guest.occupation}, Interests {string.Join(", ", guest.interests)}, Personality {guest.personalityTraits}, Relationship Goals {guest.relationshipGoals}. A new male contestant has just been introduced with this background: '{currentPlayerProfile.fullGeneratedDescription}'. Based on your personality and preferences, what is your very brief, one-sentence internal first impression or thought about him? After your thought, on a NEW LINE, provide an estimated initial adjustment to your affection score for him (a number between -15.0 and +15.0, e.g., 5.0, -2.5, 0.0). Format exactly as: Thought: [Your one-sentence thought].\nAffectionAdjustment: [Numerical score]";
+            
+            string impressionResponse = await geminiService.GetGeminiResponse(prompt);
+            Debug.Log($"Raw AI Impression Response for {guest.guestName}: {impressionResponse}");
+
+            string thought;
+            float adjustment;
+            ParseGuestImpressionResponse(impressionResponse, out thought, out adjustment);
+
+            string playerInputText = currentPlayerProfile.GetDisplayDescription(); // Use player's profile description for context
+            string guestDialogue = thought; // Default to thought for dialogue
+
+            guest.UpdateAffection(adjustment);
+            guest.EvaluateAndSetLightStatus(playerInputText, guestDialogue); 
+            guest.AddDialogue(guest.guestName + " (Initial Thought)", thought);
+            dialogueText.text += $"\n{guest.guestName}: \"{thought}\"";
+            Debug.Log($"{guest.guestName} initial thought: '{thought}', affection adjusted by {adjustment}. New score: {guest.affectionScore}");
+        }
+        UpdateGuestUI(); // Update light indicators after all impressions
+    }
+
+    private void ParseGuestImpressionResponse(string response, out string thought, out float adjustment)
+    {
+        thought = "Hmm, interesting."; // Default thought
+        adjustment = 0.0f; // Default adjustment
+
+        int thoughtIndex = response.IndexOf("Thought: ");
+        int affectionIndex = response.IndexOf("\nAffectionAdjustment: ");
+
+        if (thoughtIndex != -1)
+        {
+            if (affectionIndex != -1 && affectionIndex > thoughtIndex)
+            {
+                thought = response.Substring(thoughtIndex + "Thought: ".Length, affectionIndex - (thoughtIndex + "Thought: ".Length)).Trim();
+                string adjustmentStr = response.Substring(affectionIndex + "\nAffectionAdjustment: ".Length).Trim();
+                if (float.TryParse(adjustmentStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float parsedAdjustment))
+                {
+                    adjustment = parsedAdjustment;
+                }
+                else
+                {
+                    Debug.LogWarning($"Could not parse AffectionAdjustment value '{adjustmentStr}' from AI impression response.");
+                }
+            }
+            else
+            {
+                thought = response.Substring(thoughtIndex + "Thought: ".Length).Trim();
+                Debug.LogWarning($"Could not find 'AffectionAdjustment:' in AI impression response. Defaulting adjustment to 0.");
+            }
+        }
+        else
+        {
+            Debug.LogWarning($"Could not find 'Thought:' in AI impression response. Defaulting thought and adjustment.");
+        }
+    }
+
     private void OnPlayerInputEndEdit(string input)
     {
         if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
@@ -132,6 +282,12 @@ public class GameManager : MonoBehaviour
 
     public async void OnPlayerSubmit(string playerInputText)
     {
+        if (currentPhase == GamePhase.PlayerIntroduction)
+        {
+            TransitionToLovesFirstImpression();
+            return; // Skip the rest of the input processing logic for this phase
+        }
+
         if (string.IsNullOrWhiteSpace(playerInputText)) return;
 
         dialogueText.text += $"\n\nPlayer: {playerInputText}";
@@ -153,6 +309,9 @@ public class GameManager : MonoBehaviour
     {
         switch (currentPhase)
         {
+            case GamePhase.PlayerIntroduction: // New case
+                // This phase is handled by PlayerIntroductionSequence, no player input expected here
+                break;
             case GamePhase.LovesFirstImpression:
                 await HandleLovesFirstImpression(playerInputText);
                 break;
@@ -166,6 +325,21 @@ public class GameManager : MonoBehaviour
                 // Handle game end state, maybe restart option
                 break;
         }
+    }
+
+    private void TransitionToLovesFirstImpression()
+    {
+        currentPhase = GamePhase.LovesFirstImpression;
+        phaseIndicatorText.text = "Phase: Love's First Impression";
+        dialogueText.text += "\n\nLet's meet our 5 lovely AI guests."; 
+
+        UpdateGuestUI(); // Update guest UI for the new phase
+
+        // Re-enable player input field for the LovesFirstImpression phase
+        playerInputField.gameObject.SetActive(true);
+        // The submitButton is already active, so no need to set it again unless its text was changed.
+        playerInputField.Select(); 
+        playerInputField.ActivateInputField();
     }
 
     private async Task HandleLovesFirstImpression(string playerInputText)
