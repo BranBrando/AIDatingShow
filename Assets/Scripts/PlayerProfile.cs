@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using UnityEngine; // Added for Transform
 
 [System.Serializable]
 public class PlayerProfile
@@ -10,6 +11,7 @@ public class PlayerProfile
     public string personalityTraits;
     public string relationshipExpectations;
     public string fullGeneratedDescription; // To store the raw AI output initially
+    public Transform modelTransform; // Reference to the player's 3D model in the scene
 
     // Constructor for simple initialization
     public PlayerProfile(string name, int age, string occ, List<string> interests, string personality, string goals, string fullDesc = "")
@@ -21,6 +23,14 @@ public class PlayerProfile
         this.personalityTraits = personality;
         this.relationshipExpectations = goals;
         this.fullGeneratedDescription = string.IsNullOrEmpty(fullDesc) ? GenerateFallbackDescription() : fullDesc;
+        this.modelTransform = null; // Will be assigned in GameManager or Editor
+    }
+
+    // Constructor with Transform
+    public PlayerProfile(string name, int age, string occ, List<string> interests, string personality, string goals, string fullDesc, Transform modelTrans)
+        : this(name, age, occ, interests, personality, goals, fullDesc)
+    {
+        this.modelTransform = modelTrans;
     }
 
     // Fallback if parsing/generation fails or for simpler storage

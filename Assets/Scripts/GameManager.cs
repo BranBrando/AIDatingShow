@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using System.Text; // For StringBuilder
 using TMPro; // For TextMeshPro UI elements
 using UnityEngine.UI; // Required for Button component
+using Unity.Cinemachine; // Required for Cinemachine
 
 public enum GamePhase
 {
@@ -35,6 +36,11 @@ public class GameManager : MonoBehaviour
     public List<TextMeshProUGUI> guestNameTexts; // To display guest names
     public List<GameObject> guestLightIndicators; // To display light status (e.g., colored circles)
 
+    [Header("Camera References")]
+    [SerializeField] private DynamicCameraController dynamicCameraController;
+    [SerializeField] private Transform playerModelTransform; // Assign your player's 3D model Transform here
+    [SerializeField] private List<Transform> aiGuestModelTransforms; // Assign your AI guests' 3D model Transforms here
+
     private GeminiLLMService geminiService;
 
     void Awake()
@@ -59,16 +65,26 @@ public class GameManager : MonoBehaviour
         phaseIndicatorText.text = "Phase: Player Introduction"; // Changed
         dialogueText.text = "Welcome to 'Fei Cheng Wu Rao'! Generating your contestant profile..."; // Changed
 
-        // Initialize AI Guests here, or after player intro. Keeping it here for now.
-        aiGuests = new List<AIGuestProfile>
+        // Activate the static opening camera
+        if (dynamicCameraController != null)
         {
-            // Create 5 placeholder AI guests for MVP with initial affection scores (0-100)
-            new AIGuestProfile("Alice", 28, "Software Engineer", new List<string> { "coding", "hiking", "sci-fi" }, "analytical, witty, adventurous", "a partner who shares my intellectual curiosity", 75f),
-            new AIGuestProfile("Bella", 25, "Artist", new List<string> { "painting", "music", "travel" }, "creative, free-spirited, empathetic", "someone who appreciates art and passion", 60f),
-            new AIGuestProfile("Chloe", 30, "Doctor", new List<string> { "reading", "volunteering", "cooking" }, "caring, intelligent, practical", "a stable and supportive relationship", 50f),
-            new AIGuestProfile("Daisy", 22, "Student", new List<string> { "gaming", "social media", "fashion" }, "energetic, trendy, playful", "a fun and exciting relationship", 65f),
-            new AIGuestProfile("Eve", 33, "Entrepreneur", new List<string> { "business", "networking", "fitness" }, "ambitious, confident, direct", "a driven and independent partner", 40f)
-        };
+            dynamicCameraController.ActivateCamera(VCamType.StaticOpening);
+        }
+
+        // Initialize AI Guests with their transforms
+        aiGuests = new List<AIGuestProfile>();
+        for (int i = 0; i < 5; i++) // Assuming 5 guests as per original list
+        {
+            Transform guestTransform = (aiGuestModelTransforms != null && i < aiGuestModelTransforms.Count) ? aiGuestModelTransforms[i] : null;
+            switch (i)
+            {
+                case 0: aiGuests.Add(new AIGuestProfile("Alice", 28, "Software Engineer", new List<string> { "coding", "hiking", "sci-fi" }, "analytical, witty, adventurous", "a partner who shares my intellectual curiosity", 75f, guestTransform)); break;
+                case 1: aiGuests.Add(new AIGuestProfile("Bella", 25, "Artist", new List<string> { "painting", "music", "travel" }, "creative, free-spirited, empathetic", "someone who appreciates art and passion", 60f, guestTransform)); break;
+                case 2: aiGuests.Add(new AIGuestProfile("Chloe", 30, "Doctor", new List<string> { "reading", "volunteering", "cooking" }, "caring, intelligent, practical", "a stable and supportive relationship", 50f, guestTransform)); break;
+                case 3: aiGuests.Add(new AIGuestProfile("Daisy", 22, "Student", new List<string> { "gaming", "social media", "fashion" }, "energetic, trendy, playful", "a fun and exciting relationship", 65f, guestTransform)); break;
+                case 4: aiGuests.Add(new AIGuestProfile("Eve", 33, "Entrepreneur", new List<string> { "business", "networking", "fitness" }, "ambitious, confident, direct", "a driven and independent partner", 40f, guestTransform)); break;
+            }
+        }
 
         // Hook up input field and button (will be disabled/enabled by PlayerIntroductionSequence)
         playerInputField.onEndEdit.AddListener(OnPlayerInputEndEdit);
@@ -134,10 +150,22 @@ public class GameManager : MonoBehaviour
         playerInputField.gameObject.SetActive(false);
         if (submitButton != null) submitButton.gameObject.SetActive(false);
 
-        yield return StartCoroutine(GeneratePlayerBackground().AsCoroutine()); // Wait for background to be generated
+        yield return StartCoroutine(GeneratePlayerBackground()); // Wait for background to be generated
+
+        // The StaticOpening camera is already active from InitializeGame()
+        // Add the 5-second delay here
+        yield return new WaitForSeconds(5.0f); 
+
+        // Activate player focus camera after profile generation is complete AND after the delay
+        if (dynamicCameraController != null && currentPlayerProfile.modelTransform != null)
+        {
+            dynamicCameraController.ActivateCamera(VCamType.PlayerFocus, currentPlayerProfile.modelTransform);
+        }
+        // Add the 5-second delay here
+        yield return new WaitForSeconds(5.0f); 
 
         dialogueText.text += "\n\n--- Guests' First Impressions ---"; // New header
-        yield return StartCoroutine(ProcessGuestFirstImpressions().AsCoroutine()); // Process guest impressions
+        yield return StartCoroutine(ProcessGuestFirstImpressions()); // Process guest impressions
 
         dialogueText.text += "\n\nClick the 'Submit' button (or press Enter) to continue.";
         // playerInputField should remain disabled as no text input is needed here.
@@ -149,7 +177,7 @@ public class GameManager : MonoBehaviour
         // No automatic transition here. OnPlayerSubmit will handle it.
     }
 
-    private async Task GeneratePlayerBackground()
+    private IEnumerator GeneratePlayerBackground()
     {
         // 1. Construct the prompt
         string prompt = "You are an AI assistant for a dating game show called 'Fei Cheng Wu Rao'. " +
@@ -163,62 +191,52 @@ public class GameManager : MonoBehaviour
                         "Make the description sound natural and engaging for a dating show introduction. Do not use placeholders like [Age] or [Profession]. Directly state the generated values. Example: 'Our next contestant is Michael, a 32-year-old software architect who loves rock climbing and playing the guitar. He's known for his witty humor and is hoping to find someone who shares his passion for adventure and a good laugh.'";
 
         dialogueText.text += "\n\nSystem: Generating your unique profile with AI...";
-        string generatedBackgroundText = await geminiService.GetGeminiResponse(prompt);
+        
+        Task<string> generationTask = geminiService.GetGeminiResponse(prompt);
+        yield return new WaitUntil(() => generationTask.IsCompleted); // Wait for the task to complete
+        string generatedBackgroundText = generationTask.Result;
 
         if (generatedBackgroundText.StartsWith("Error:"))
         {
             dialogueText.text += $"\n\nSystem: Error generating profile: {generatedBackgroundText}";
             // Handle error, maybe use a default profile
-            currentPlayerProfile = new PlayerProfile("Default Player", 30, "Adventurer", new List<string>{"Exploring"}, "Curious", "An interesting connection");
+            currentPlayerProfile = new PlayerProfile("Default Player", 30, "Adventurer", new List<string>{"Exploring"}, "Curious", "An interesting connection", "Default profile generated due to error.", playerModelTransform);
         }
         else
         {
             dialogueText.text += $"\n\n--- Your AI-Generated Profile ---";
             dialogueText.text += $"\n{generatedBackgroundText}";
-            // For now, store the whole text. Later, parse it into PlayerProfile fields.
-            // This is a simplification. Ideally, the LLM returns structured data or we parse this string.
-            currentPlayerProfile = ParsePlayerBackground(generatedBackgroundText); // Need to implement ParsePlayerBackground
+            currentPlayerProfile = ParsePlayerBackground(generatedBackgroundText); 
+            currentPlayerProfile.modelTransform = playerModelTransform; // Ensure the transform is assigned
         }
+        // Camera will be activated after the PlayerIntroductionSequence completes, not immediately here.
     }
 
     private PlayerProfile ParsePlayerBackground(string backgroundText)
     {
-        // This is a very basic placeholder.
-        // Ideally, the LLM would provide structured data, or we'd use more robust NLP parsing.
-        // For now, we can try to extract some info or just store the description.
-        // Let's assume the LLM gives a paragraph. We'll need to decide how to populate PlayerProfile fields.
-        // For the MVP, we might just store the full description in PlayerProfile.
-        // Or, we can try to extract some keywords if the prompt is well-defined.
+        string name = "The Contestant"; 
+        int age = 30; 
+        string occupation = "To be revealed"; 
+        List<string> interests = new List<string>(); 
+        string personality = "Intriguing"; 
+        string relationshipGoals = "A meaningful connection"; 
 
-        // Example: if PlayerProfile has a 'fullDescription' field:
-        // return new PlayerProfile { fullDescription = backgroundText };
-
-        // For now, let's create a simple profile with the text as a general description
-        // and try to guess some fields for demonstration. This is NOT robust.
-        string name = "The Contestant"; // Or extract if possible
-        int age = 30; // Default or try to parse
-        string occupation = "To be revealed"; // Default or try to parse
-        List<string> interests = new List<string>(); // Default or try to parse
-        string personality = "Intriguing"; // Default or try to parse
-        string relationshipGoals = "A meaningful connection"; // Default or try to parse
-
-        // Attempt to parse age (very naive)
         var ageMatch = System.Text.RegularExpressions.Regex.Match(backgroundText, @"\b(\d{2})\b-year-old");
         if (ageMatch.Success) int.TryParse(ageMatch.Groups[1].Value, out age);
 
-        // This parsing logic needs to be significantly improved or the LLM prompt needs to enforce a structure.
-        // For the initial implementation, we might just have a single "description" field in PlayerProfile.
-        // Let's assume PlayerProfile will have a constructor that takes the full text for now.
-        return new PlayerProfile(name, age, occupation, interests, personality, relationshipGoals, backgroundText);
+        return new PlayerProfile(name, age, occupation, interests, personality, relationshipGoals, backgroundText, playerModelTransform);
     }
 
-    private async Task ProcessGuestFirstImpressions()
+    private IEnumerator ProcessGuestFirstImpressions()
     {
         foreach (var guest in aiGuests)
         {
             string prompt = $"You are {guest.guestName}, a character in a dating show. Your profile: Age {guest.age}, Occupation {guest.occupation}, Interests {string.Join(", ", guest.interests)}, Personality {guest.personalityTraits}, Relationship Goals {guest.relationshipGoals}. A new male contestant has just been introduced with this background: '{currentPlayerProfile.fullGeneratedDescription}'. Based on your personality and preferences, what is your very brief, one-sentence internal first impression or thought about him? After your thought, on a NEW LINE, provide an estimated initial adjustment to your affection score for him (a number between -15.0 and +15.0, e.g., 5.0, -2.5, 0.0). Format exactly as: Thought: [Your one-sentence thought].\nAffectionAdjustment: [Numerical score]";
             
-            string impressionResponse = await geminiService.GetGeminiResponse(prompt);
+            Task<string> impressionTask = geminiService.GetGeminiResponse(prompt);
+            yield return new WaitUntil(() => impressionTask.IsCompleted); // Wait for the task to complete
+            string impressionResponse = impressionTask.Result;
+
             Debug.Log($"Raw AI Impression Response for {guest.guestName}: {impressionResponse}");
 
             string thought;
@@ -233,8 +251,20 @@ public class GameManager : MonoBehaviour
             guest.AddDialogue(guest.guestName + " (Initial Thought)", thought);
             dialogueText.text += $"\n{guest.guestName}: \"{thought}\"";
             Debug.Log($"{guest.guestName} initial thought: '{thought}', affection adjusted by {adjustment}. New score: {guest.affectionScore}");
+
+            // Activate guest focus camera for each impression
+            if (dynamicCameraController != null && guest.modelTransform != null)
+            {
+                dynamicCameraController.ActivateCamera(VCamType.GuestFocus, guest.modelTransform);
+                yield return new WaitForSeconds(5.0f); // Brief pause to show the camera focus
+            }
         }
         UpdateGuestUI(); // Update light indicators after all impressions
+        // After all impressions, return to player focus or panoramic
+        if (dynamicCameraController != null && currentPlayerProfile.modelTransform != null)
+        {
+            dynamicCameraController.ActivateCamera(VCamType.PlayerFocus, currentPlayerProfile.modelTransform);
+        }
     }
 
     private void ParseGuestImpressionResponse(string response, out string thought, out float adjustment)
@@ -302,6 +332,12 @@ public class GameManager : MonoBehaviour
             }
         }
 
+        // Activate player focus camera when it's the player's turn to input
+        if (dynamicCameraController != null && currentPlayerProfile.modelTransform != null)
+        {
+            dynamicCameraController.ActivateCamera(VCamType.PlayerFocus, currentPlayerProfile.modelTransform);
+        }
+
         await ProcessPlayerTurn(playerInputText);
     }
 
@@ -334,6 +370,12 @@ public class GameManager : MonoBehaviour
         dialogueText.text += "\n\nLet's meet our 5 lovely AI guests."; 
 
         UpdateGuestUI(); // Update guest UI for the new phase
+
+        // Activate panoramic camera for guest introductions
+        if (dynamicCameraController != null)
+        {
+            dynamicCameraController.ActivateCamera(VCamType.Panoramic);
+        }
 
         // Re-enable player input field for the LovesFirstImpression phase
         playerInputField.gameObject.SetActive(true);
@@ -417,6 +459,13 @@ public class GameManager : MonoBehaviour
         {
             if (guest.currentLightStatus != LightStatus.Off) // Only active guests respond
             {
+                // Focus on the guest who is about to respond
+                if (dynamicCameraController != null && guest.modelTransform != null)
+                {
+                    dynamicCameraController.ActivateCamera(VCamType.GuestFocus, guest.modelTransform);
+                    await Task.Delay(500); // Short delay for camera transition
+                }
+
                 string prompt = GeneratePromptForGuest(guest, playerInputText);
                 string aiResponse = await geminiService.GetGeminiResponse(prompt);
                 Debug.Log($"Raw AI Response for {guest.guestName}: {aiResponse}");
@@ -475,10 +524,22 @@ public class GameManager : MonoBehaviour
         currentPhase = GamePhase.LovesFinalChoice;
         phaseIndicatorText.text = "Phase: Love's Final Choice";
         dialogueText.text += "\n\n--- Phase Transition: Love's Final Choice --- \n\nPlayer, choose one of the remaining guests by typing their name, or type 'skip' for a smart recommendation.";
+
+        // Return to player focus after guest responses in Reassessment phase
+        if (dynamicCameraController != null && currentPlayerProfile.modelTransform != null)
+        {
+            dynamicCameraController.ActivateCamera(VCamType.PlayerFocus, currentPlayerProfile.modelTransform);
+        }
     }
 
     private void HandleLovesFinalChoice(string playerInputText)
     {
+        // Focus on player as they make their choice
+        if (dynamicCameraController != null && currentPlayerProfile.modelTransform != null)
+        {
+            dynamicCameraController.ActivateCamera(VCamType.PlayerFocus, currentPlayerProfile.modelTransform);
+        }
+
         if (playerInputText.ToLower() == "skip")
         {
             // Smart Recommendation (simplified: pick a random 'On' or 'Burst' light)
@@ -547,6 +608,12 @@ public class GameManager : MonoBehaviour
         if (submitButton != null)
         {
             submitButton.gameObject.SetActive(false);
+        }
+
+        // Activate panoramic camera or a specific end-game camera
+        if (dynamicCameraController != null)
+        {
+            dynamicCameraController.ActivateCamera(VCamType.Panoramic); // Or a dedicated GameEnd camera
         }
     }
 

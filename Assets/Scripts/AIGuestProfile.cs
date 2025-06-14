@@ -17,6 +17,7 @@ public class AIGuestProfile
     public List<string> interests;
     public string personalityTraits; // Can be a comma-separated string or a list
     public string relationshipGoals;
+    public Transform modelTransform; // Reference to the guest's 3D model in the scene
     // public float initialDisposition; // Removed, replaced by affectionScore
     public LightStatus currentLightStatus;
     public List<string> dialogueHistory;
@@ -33,7 +34,7 @@ public class AIGuestProfile
     public const float AffectionThresholdBurst = 90f;
     public const int InitialNegativeBuffer = 1; // Example: 1 free pass for a minor negative interaction
 
-    public AIGuestProfile(string name, int age, string occ, List<string> interests, string personality, string goals, float initialAffection)
+    public AIGuestProfile(string name, int age, string occ, List<string> interests, string personality, string goals, float initialAffection, Transform modelTrans = null)
     {
         this.guestName = name;
         this.age = age;
@@ -41,6 +42,7 @@ public class AIGuestProfile
         this.interests = interests;
         this.personalityTraits = personality;
         this.relationshipGoals = goals;
+        this.modelTransform = modelTrans; // Assign the model transform
         
         this.affectionScore = initialAffection; // Use the passed value (e.g., 50-70 as a base)
         this.interestMatchScore = 50f; // Start neutral
