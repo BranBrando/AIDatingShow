@@ -32,6 +32,7 @@ public class GameManager : MonoBehaviour
     public TextMeshProUGUI dialogueText;
     public TMP_InputField playerInputField;
     public GameObject submitButton; // Or a Button component reference
+    public TextMeshProUGUI submitButtonText; // Assign in Inspector: The TextMeshProUGUI component on the Submit Button
     public TextMeshProUGUI phaseIndicatorText;
     public List<TextMeshProUGUI> guestNameTexts; // To display guest names
     public List<GameObject> guestLightIndicators; // To display light status (e.g., colored circles)
@@ -42,6 +43,7 @@ public class GameManager : MonoBehaviour
     [SerializeField] private List<Transform> aiGuestModelTransforms; // Assign your AI guests' 3D model Transforms here
 
     private GeminiLLMService geminiService;
+    private bool isWaitingToAdvanceGuestDialogue = false; // Flag to pause for player input between guest dialogues
 
     void Awake()
     {
@@ -176,6 +178,11 @@ public class GameManager : MonoBehaviour
             submitButton.gameObject.SetActive(true); // Ensure the Submit/Next button is active
         }
         // No automatic transition here. OnPlayerSubmit will handle it.
+        // Set button text for this "continue" action
+        if (submitButtonText != null)
+        {
+            submitButtonText.text = "Continue";
+        }
     }
 
     private IEnumerator GeneratePlayerBackground()
@@ -257,8 +264,16 @@ public class GameManager : MonoBehaviour
             if (dynamicCameraController != null && guest.modelTransform != null)
             {
                 dynamicCameraController.ActivateCamera(VCamType.GuestFocus, guest.modelTransform);
-                yield return new WaitForSeconds(5.0f); // Brief pause to show the camera focus
+                yield return new WaitForSeconds(3.0f); // Shorter pause before waiting for input
             }
+
+            // Wait for player to click "Next Guest"
+            isWaitingToAdvanceGuestDialogue = true;
+            if (submitButton != null) submitButton.gameObject.SetActive(true); // Ensure it's active
+            if (submitButtonText != null) submitButtonText.text = "Next Guest";
+            
+            yield return new WaitUntil(() => !isWaitingToAdvanceGuestDialogue);
+            // submitButtonText will be reset by PlayerIntroductionSequence or next phase
         }
         UpdateGuestUI(); // Update light indicators after all impressions
         // After all impressions, activate a random camera for player focus or panoramic
@@ -308,15 +323,25 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    public async void OnPlayerSubmit(string playerInputText)
+    public void OnPlayerSubmit(string playerInputText) // Changed from async void
     {
-        if (currentPhase == GamePhase.PlayerIntroduction)
+        if (isWaitingToAdvanceGuestDialogue)
         {
-            TransitionToLovesFirstImpression();
-            return; // Skip the rest of the input processing logic for this phase
+            isWaitingToAdvanceGuestDialogue = false;
+            // Button text will be handled by the specific phase/coroutine that set it
+            // playerInputField.text = ""; // Clear any accidental input if the field was active
+            return; 
         }
 
-        if (string.IsNullOrWhiteSpace(playerInputText)) return;
+        if (currentPhase == GamePhase.PlayerIntroduction)
+        {
+            // This is the "Continue" click after player profile is shown
+            if (submitButtonText != null) submitButtonText.text = "Submit"; // Revert for next phase
+            TransitionToLovesFirstImpression();
+            return; 
+        }
+
+        if (string.IsNullOrWhiteSpace(playerInputText) && currentPhase != GamePhase.PlayerIntroduction) return; // Allow empty submit only for initial continue
 
         dialogueText.text += $"\n\nPlayer: {playerInputText}";
         playerInputField.text = ""; // Clear input field
@@ -333,23 +358,24 @@ public class GameManager : MonoBehaviour
         // Activate a random camera for player focus when it's the player's turn to input
         ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing");
 
-        await ProcessPlayerTurn(playerInputText);
+        StartCoroutine(ProcessPlayerTurn(playerInputText)); // Changed from await
     }
 
-    private async Task ProcessPlayerTurn(string playerInputText)
+    private IEnumerator ProcessPlayerTurn(string playerInputText) // Changed from async Task
     {
         switch (currentPhase)
         {
             case GamePhase.PlayerIntroduction: // New case
-                // This phase is handled by PlayerIntroductionSequence, no player input expected here
+                // This phase is handled by PlayerIntroductionSequence and the initial part of OnPlayerSubmit
                 break;
             case GamePhase.LovesFirstImpression:
-                await HandleLovesFirstImpression(playerInputText);
+                yield return StartCoroutine(HandleLovesFirstImpression(playerInputText)); // Changed from await
                 break;
             case GamePhase.LovesReassessment:
-                await HandleLovesReassessment(playerInputText);
+                yield return StartCoroutine(HandleLovesReassessment(playerInputText)); // Changed from await
                 break;
             case GamePhase.LovesFinalChoice:
+                // HandleLovesFinalChoice is not async, so no change here if it doesn't become a coroutine
                 HandleLovesFinalChoice(playerInputText);
                 break;
             case GamePhase.GameEnd:
@@ -371,24 +397,32 @@ public class GameManager : MonoBehaviour
 
         // Re-enable player input field for the LovesFirstImpression phase
         playerInputField.gameObject.SetActive(true);
-        // The submitButton is already active, so no need to set it again unless its text was changed.
+        if (submitButtonText != null) submitButtonText.text = "Submit"; // Ensure button text is correct
+        // The submitButton is already active.
         playerInputField.Select(); 
         playerInputField.ActivateInputField();
     }
 
-    private async Task HandleLovesFirstImpression(string playerInputText)
+    private IEnumerator HandleLovesFirstImpression(string playerInputText) // Changed from async Task
     {
         dialogueText.text += "\n\n--- AI Guest Responses (Love's First Impression) ---";
-        foreach (var guest in aiGuests)
+        if (submitButtonText != null) submitButtonText.text = "Next Guest"; // Set for the loop
+
+        for (int i = 0; i < aiGuests.Count; i++)
         {
+            var guest = aiGuests[i];
             if (guest.currentLightStatus != LightStatus.Off) // Only active guests respond
             {
                 // Activate a random camera focusing on the guest who is about to respond
                 ActivateRandomCameraWithContext("GuestSpeaking", guest);
-                await Task.Delay(2000); // Short delay for camera transition
+                yield return new WaitForSeconds(1.5f); // Short delay for camera transition
 
                 string prompt = GeneratePromptForGuest(guest, playerInputText);
-                string aiResponse = await geminiService.GetGeminiResponse(prompt);
+                
+                Task<string> geminiTask_LFI = geminiService.GetGeminiResponse(prompt);
+                yield return new WaitUntil(() => geminiTask_LFI.IsCompleted);
+                if (geminiTask_LFI.IsFaulted) { Debug.LogError($"Gemini task error for {guest.guestName}: {geminiTask_LFI.Exception}"); continue; }
+                string aiResponse = geminiTask_LFI.Result;
                 Debug.Log($"Raw AI Response for {guest.guestName}: {aiResponse}");
                 
                 string guestDialogue = aiResponse; // Default to full response
@@ -423,8 +457,32 @@ public class GameManager : MonoBehaviour
 
                 guest.AddDialogue(guest.guestName, guestDialogue); // Add the verbal response to history
                 dialogueText.text += $"\n{guest.guestName}: {guestDialogue} (Light: {guest.currentLightStatus})"; // UI shows the new status
+
+                // Wait for player to click "Next Guest" or "Submit" (if it's the last guest)
+                isWaitingToAdvanceGuestDialogue = true;
+                if (submitButton != null) submitButton.gameObject.SetActive(true);
+                // Keep "Next Guest" text unless it's the very last guest of all active ones in this phase
+                bool isLastActiveGuestInPhase = true;
+                for (int j = i + 1; j < aiGuests.Count; j++)
+                {
+                    if (aiGuests[j].currentLightStatus != LightStatus.Off)
+                    {
+                        isLastActiveGuestInPhase = false;
+                        break;
+                    }
+                }
+                if (isLastActiveGuestInPhase && submitButtonText != null)
+                {
+                    // If it's the last guest to speak in this round, button might imply phase end
+                    // For now, let's keep it "Next Guest" and handle phase transition text later
+                }
+
+
+                yield return new WaitUntil(() => !isWaitingToAdvanceGuestDialogue);
             }
         }
+        if (submitButtonText != null) submitButtonText.text = "Submit"; // Revert for next player input phase
+
         // Collective Light Off check
         int lightsOffCount = 0;
         foreach (var g in aiGuests)
@@ -446,22 +504,31 @@ public class GameManager : MonoBehaviour
         currentPhase = GamePhase.LovesReassessment;
         phaseIndicatorText.text = "Phase: Love's Reassessment";
         dialogueText.text += "\n\n--- Phase Transition: Love's Reassessment --- \n\nPlayer, you can now interact further with the remaining guests.";
+        if (playerInputField != null) playerInputField.gameObject.SetActive(true); // Ensure input field is active
+        if (submitButtonText != null) submitButtonText.text = "Submit";
         ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing"); // Return to player focus after phase transition
     }
 
-    private async Task HandleLovesReassessment(string playerInputText)
+    private IEnumerator HandleLovesReassessment(string playerInputText) // Changed from async Task
     {
         dialogueText.text += "\n\n--- AI Guest Responses (Love's Reassessment) ---";
-        foreach (var guest in aiGuests)
+        if (submitButtonText != null) submitButtonText.text = "Next Guest"; // Set for the loop
+
+        for (int i = 0; i < aiGuests.Count; i++)
         {
+            var guest = aiGuests[i];
             if (guest.currentLightStatus != LightStatus.Off) // Only active guests respond
             {
                 // Activate a random camera focusing on the guest who is about to respond
                 ActivateRandomCameraWithContext("GuestSpeaking", guest);
-                await Task.Delay(2000); // Short delay for camera transition
+                yield return new WaitForSeconds(1.5f); // Short delay for camera transition
 
                 string prompt = GeneratePromptForGuest(guest, playerInputText);
-                string aiResponse = await geminiService.GetGeminiResponse(prompt);
+
+                Task<string> geminiTask_LR = geminiService.GetGeminiResponse(prompt); // Unique task name
+                yield return new WaitUntil(() => geminiTask_LR.IsCompleted);
+                if (geminiTask_LR.IsFaulted) { Debug.LogError($"Gemini task error for {guest.guestName}: {geminiTask_LR.Exception}"); continue; }
+                string aiResponse = geminiTask_LR.Result;
                 Debug.Log($"Raw AI Response for {guest.guestName}: {aiResponse}");
 
                 string guestDialogue = aiResponse; // Default to full response
@@ -496,8 +563,30 @@ public class GameManager : MonoBehaviour
 
                 guest.AddDialogue(guest.guestName, guestDialogue); // Add the verbal response to history
                 dialogueText.text += $"\n{guest.guestName}: {guestDialogue} (Light: {guest.currentLightStatus})"; // UI shows the new status
+
+                // Wait for player to click "Next Guest" or "Submit" (if it's the last guest)
+                isWaitingToAdvanceGuestDialogue = true;
+                if (submitButton != null) submitButton.gameObject.SetActive(true);
+                // Keep "Next Guest" text unless it's the very last guest of all active ones in this phase
+                bool isLastActiveGuestInPhase = true;
+                for (int j = i + 1; j < aiGuests.Count; j++)
+                {
+                    if (aiGuests[j].currentLightStatus != LightStatus.Off)
+                    {
+                        isLastActiveGuestInPhase = false;
+                        break;
+                    }
+                }
+                if (isLastActiveGuestInPhase && submitButtonText != null)
+                {
+                     // If it's the last guest to speak in this round, button might imply phase end
+                }
+
+                yield return new WaitUntil(() => !isWaitingToAdvanceGuestDialogue);
             }
         }
+        if (submitButtonText != null) submitButtonText.text = "Submit"; // Revert for next player input phase
+
         // Collective Light Off check
         int lightsOffCount = 0;
         foreach (var g in aiGuests)
@@ -518,8 +607,8 @@ public class GameManager : MonoBehaviour
         currentPhase = GamePhase.LovesFinalChoice;
         phaseIndicatorText.text = "Phase: Love's Final Choice";
         dialogueText.text += "\n\n--- Phase Transition: Love's Final Choice --- \n\nPlayer, choose one of the remaining guests by typing their name, or type 'skip' for a smart recommendation.";
-
-        // Activate a random camera for player focus after guest responses in Reassessment phase
+        if (playerInputField != null) playerInputField.gameObject.SetActive(true); // Ensure input field is active
+        if (submitButtonText != null) submitButtonText.text = "Submit";
         ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing");
     }
 
@@ -536,7 +625,7 @@ public class GameManager : MonoBehaviour
             {
                 selectedGuestForFinalChoice = remainingGuests[Random.Range(0, remainingGuests.Count)];
                 dialogueText.text += $"\n\nSystem: You chose to skip. The system recommends {selectedGuestForFinalChoice.guestName}!";
-                EndGameWithResult(selectedGuestForFinalChoice);
+                StartCoroutine(EndGameWithResult(selectedGuestForFinalChoice)); // Changed to StartCoroutine
             }
             else
             {
@@ -551,7 +640,7 @@ public class GameManager : MonoBehaviour
             {
                 selectedGuestForFinalChoice = chosenGuest;
                 dialogueText.text += $"\n\nPlayer: I choose {chosenGuest.guestName}.";
-                EndGameWithResult(chosenGuest);
+                StartCoroutine(EndGameWithResult(chosenGuest)); // Changed to StartCoroutine
             }
             else
             {
@@ -560,10 +649,14 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    private async void EndGameWithResult(AIGuestProfile finalGuest)
+    private IEnumerator EndGameWithResult(AIGuestProfile finalGuest) // Changed from async void
     {
         string prompt = $"You are {finalGuest.guestName}, a {finalGuest.age}-year-old {finalGuest.occupation}. Your personality is {finalGuest.personalityTraits}. You are on a dating show. The male contestant has chosen you for the final decision. Based on your previous interactions and your current light status ({finalGuest.currentLightStatus}), do you accept or reject him? Respond with your decision and a brief message. State 'Decision: ACCEPT' or 'Decision: REJECT'.";
-        string aiResponse = await geminiService.GetGeminiResponse(prompt);
+        
+        Task<string> geminiTask_End = geminiService.GetGeminiResponse(prompt);
+        yield return new WaitUntil(() => geminiTask_End.IsCompleted);
+        if (geminiTask_End.IsFaulted) { Debug.LogError($"Gemini task error for endgame with {finalGuest.guestName}: {geminiTask_End.Exception}"); yield break; }
+        string aiResponse = geminiTask_End.Result;
 
         string decision = "REJECT"; // Default
         string finalMessage = aiResponse;
@@ -649,6 +742,7 @@ public class GameManager : MonoBehaviour
             case "GuestSpeaking":
                 pool.Add(VCamType.GuestFocus);
                 pool.Add(VCamType.OverShoulderPlayer); // Player's OTS looking at guest
+                pool.Add(VCamType.OverShoulderGuest); // Guest's OTS looking at guest
                 pool.Add(VCamType.Panoramic);
                 // Add GroupShotActiveGuests if multiple guests are active and relevant
                 break;
@@ -728,7 +822,15 @@ public class GameManager : MonoBehaviour
                 break;
             case VCamType.OverShoulderGuest:
                 primaryTarget = currentGuest?.modelTransform;
-                secondaryTarget = currentPlayerProfile?.modelTransform; // Guest looking at player
+                if (contextKey == "GuestSpeaking")
+                {
+                    secondaryTarget = currentGuest?.modelTransform; // Guest looking at themselves (the speaking guest)
+                }
+                else
+                {
+                    secondaryTarget = currentPlayerProfile?.modelTransform; // Guest looking at player
+                }
+                
                 if (primaryTarget != null && secondaryTarget != null)
                 {
                     dynamicCameraController.SetOverShoulderGuestTargets(primaryTarget, secondaryTarget);
