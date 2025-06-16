@@ -37,6 +37,10 @@ public class GameManager : MonoBehaviour
     [SerializeField] private Transform playerModelTransform; // Assign your player's 3D model Transform here
     [SerializeField] private List<Transform> aiGuestModelTransforms; // Assign your AI guests' 3D model Transforms here
 
+    [Header("Random Camera Cycling")]
+    public float cameraSwitchInterval = 5f;
+    private Coroutine _randomCameraCycleCoroutineRef;
+
     private GeminiLLMService geminiService;
     private bool isWaitingToAdvanceGuestDialogue = false; // Flag to pause for player input between guest dialogues
 
@@ -125,6 +129,9 @@ public class GameManager : MonoBehaviour
 
         uiManager.AppendDialogueText("\n\n--- Guests' First Impressions ---"); // New header
         yield return StartCoroutine(ProcessGuestFirstImpressions()); // Process guest impressions
+
+        // Stop continuous camera cycling during player choice/interaction
+        // StopContinuousCameraCycling();
 
         uiManager.AppendDialogueText("\n\nClick the 'Submit' button (or press Enter) to continue.");
         // playerInputField should remain disabled as no text input is needed here.
@@ -225,8 +232,8 @@ public class GameManager : MonoBehaviour
             // submitButtonText will be reset by PlayerIntroductionSequence or next phase
         }
         UpdateGuestUI(); // Update light indicators after all impressions
-        // After all impressions, activate a random camera for player focus or panoramic
-        ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing");
+        // Start the continuous random camera cycling
+        StartContinuousCameraCycling();
     }
 
     private void ParseGuestImpressionResponse(string response, out string thought, out float adjustment)
@@ -299,7 +306,7 @@ public class GameManager : MonoBehaviour
         }
 
         // Activate a random camera for player focus when it's the player's turn to input
-        ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing");
+        TriggerSingleCameraSwitchWithContext("PlayerSpeakingOrChoosing");
 
         StartCoroutine(ProcessPlayerTurn(playerInputText)); // Changed from await
     }
@@ -336,7 +343,7 @@ public class GameManager : MonoBehaviour
         UpdateGuestUI(); // Update guest UI for the new phase
 
         // Activate a random camera for guest introductions
-        ActivateRandomCameraWithContext("PhaseTransitionGeneral");
+        // TriggerSingleCameraSwitchWithContext("PhaseTransitionGeneral");
 
         // Re-enable player input field for the LovesFirstImpression phase
         uiManager.SetPlayerInputActive(true);
@@ -356,7 +363,7 @@ public class GameManager : MonoBehaviour
             if (guest.currentLightStatus != LightStatus.Off) // Only active guests respond
             {
                 // Activate a random camera focusing on the guest who is about to respond
-                ActivateRandomCameraWithContext("GuestSpeaking", guest);
+                TriggerSingleCameraSwitchWithContext("GuestSpeaking", guest);
                 yield return new WaitForSeconds(1.5f); // Short delay for camera transition
 
                 string prompt = GeneratePromptForGuest(guest, playerInputText);
@@ -376,13 +383,13 @@ public class GameManager : MonoBehaviour
                 {
                     guestDialogue = aiResponse.Substring(0, affectionChangeIndex).Trim();
                     string affectionChangeStr = aiResponse.Substring(affectionChangeIndex + "\nAffectionChange: ".Length).Trim();
-                    if (float.TryParse(affectionChangeStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out affectionChange))
+                    if (float.TryParse(affectionChangeStr, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out float parsedAdjustment))
                     {
-                        Debug.Log($"{guest.guestName}: Parsed AffectionChange: {affectionChange}");
+                        affectionChange = parsedAdjustment;
                     }
                     else
                     {
-                        Debug.LogWarning($"{guest.guestName}: Could not parse AffectionChange value '{affectionChangeStr}' from AI response: {aiResponse}");
+                        Debug.LogWarning($"Could not parse AffectionChange value '{affectionChangeStr}' from AI response: {aiResponse}");
                     }
                 }
                 else
@@ -448,7 +455,7 @@ public class GameManager : MonoBehaviour
         uiManager.AppendDialogueText("\n\n--- Phase Transition: Love's Reassessment --- \n\nPlayer, you can now interact further with the remaining guests.");
         uiManager.SetPlayerInputActive(true); // Ensure input field is active
         uiManager.SetSubmitButtonText("Submit");
-        ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing"); // Return to player focus after phase transition
+        TriggerSingleCameraSwitchWithContext("PlayerSpeakingOrChoosing"); // Return to player focus after phase transition
     }
 
     private IEnumerator HandleLovesReassessment(string playerInputText) // Changed from async Task
@@ -462,7 +469,7 @@ public class GameManager : MonoBehaviour
             if (guest.currentLightStatus != LightStatus.Off) // Only active guests respond
             {
                 // Activate a random camera focusing on the guest who is about to respond
-                ActivateRandomCameraWithContext("GuestSpeaking", guest);
+                TriggerSingleCameraSwitchWithContext("GuestSpeaking", guest);
                 yield return new WaitForSeconds(1.5f); // Short delay for camera transition
 
                 string prompt = GeneratePromptForGuest(guest, playerInputText);
@@ -551,13 +558,13 @@ public class GameManager : MonoBehaviour
         uiManager.AppendDialogueText("\n\n--- Phase Transition: Love's Final Choice --- \n\nPlayer, choose one of the remaining guests by typing their name, or type 'skip' for a smart recommendation.");
         uiManager.SetPlayerInputActive(true); // Ensure input field is active
         uiManager.SetSubmitButtonText("Submit");
-        ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing");
+        TriggerSingleCameraSwitchWithContext("PlayerSpeakingOrChoosing");
     }
 
     private void HandleLovesFinalChoice(string playerInputText)
     {
         // Activate a random camera for player focus as they make their choice
-        ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing");
+        TriggerSingleCameraSwitchWithContext("PlayerSpeakingOrChoosing");
 
         if (playerInputText.ToLower() == "skip")
         {
@@ -631,7 +638,7 @@ public class GameManager : MonoBehaviour
         uiManager.SetSubmitButtonActive(false);
 
         // Activate a random camera for the end-game
-        ActivateRandomCameraWithContext("GameEnd");
+        TriggerSingleCameraSwitchWithContext("GameEnd");
     }
 
     private string GeneratePromptForGuest(AIGuestProfile guest, string playerInput)
@@ -682,12 +689,12 @@ public class GameManager : MonoBehaviour
                 pool.Add(VCamType.GuestFocus);
                 pool.Add(VCamType.OverShoulderPlayer); // Player's OTS looking at guest
                 pool.Add(VCamType.OverShoulderGuest); // Guest's OTS looking at guest
-                pool.Add(VCamType.Panoramic);
                 // Add GroupShotActiveGuests if multiple guests are active and relevant
                 break;
             case "PlayerSpeakingOrChoosing":
                 pool.Add(VCamType.PlayerFocus);
                 pool.Add(VCamType.OverShoulderGuest); // Guest's OTS looking at player
+                pool.Add(VCamType.OverShoulderPlayer); // Player's OTS looking at guest
                 pool.Add(VCamType.Panoramic);
                 break;
             case "PhaseTransitionGeneral":
@@ -725,11 +732,109 @@ public class GameManager : MonoBehaviour
     }
 
     /// <summary>
-    /// Activates a random camera from a pool suitable for the given context.
+    /// Starts the continuous random camera cycling coroutine.
+    /// </summary>
+    public void StartContinuousCameraCycling()
+    {
+        if (_randomCameraCycleCoroutineRef != null)
+        {
+            StopCoroutine(_randomCameraCycleCoroutineRef);
+        }
+        _randomCameraCycleCoroutineRef = StartCoroutine(ActivateRandomCameraWithContextCoroutine());
+        Debug.Log("Started continuous random camera cycling.");
+    }
+
+    /// <summary>
+    /// Stops the continuous random camera cycling coroutine.
+    /// </summary>
+    public void StopContinuousCameraCycling()
+    {
+        if (_randomCameraCycleCoroutineRef != null)
+        {
+            StopCoroutine(_randomCameraCycleCoroutineRef);
+            _randomCameraCycleCoroutineRef = null;
+            Debug.Log("Stopped continuous random camera cycling.");
+        }
+    }
+
+    /// <summary>
+    /// Coroutine that randomly activates a camera every 'cameraSwitchInterval' seconds,
+    /// considering contextual targets.
+    /// </summary>
+    public IEnumerator ActivateRandomCameraWithContextCoroutine()
+    {
+        while (true)
+        {
+            yield return new WaitForSeconds(cameraSwitchInterval);
+
+            string contextKeyForPhase = "Panoramic"; // Default context
+            AIGuestProfile targetGuestForPhase = null;
+
+            switch (currentPhase)
+            {
+                case GamePhase.PlayerIntroduction:
+                    // During player intro, alternate between player focus and panoramic
+                    if (currentPlayerProfile != null && currentPlayerProfile.modelTransform != null && Random.value > 0.5f)
+                    {
+                        contextKeyForPhase = "PlayerSpeakingOrChoosing";
+                    }
+                    else
+                    {
+                        contextKeyForPhase = "Panoramic";
+                    }
+                    break;
+
+                case GamePhase.LovesFirstImpression:
+                case GamePhase.LovesReassessment:
+                    // During interaction phases, prioritize active guests or player, then panoramic
+                    List<AIGuestProfile> activeGuests = aiGuests.FindAll(g => g.currentLightStatus != LightStatus.Off && g.modelTransform != null);
+                    if (activeGuests.Count > 0 && Random.value > 0.3f) // 70% chance to focus on an active guest
+                    {
+                        targetGuestForPhase = activeGuests[Random.Range(0, activeGuests.Count)];
+                        contextKeyForPhase = "GuestSpeaking";
+                    }
+                    else if (currentPlayerProfile != null && currentPlayerProfile.modelTransform != null && Random.value > 0.5f) // 50% chance of remaining to focus on player
+                    {
+                        contextKeyForPhase = "PlayerSpeakingOrChoosing";
+                    }
+                    else // Fallback to panoramic
+                    {
+                        contextKeyForPhase = "Panoramic";
+                    }
+                    break;
+
+                case GamePhase.LovesFinalChoice:
+                    // Focus heavily on the player making the choice, or a wide shot
+                    if (currentPlayerProfile != null && currentPlayerProfile.modelTransform != null && Random.value > 0.3f)
+                    {
+                        contextKeyForPhase = "PlayerSpeakingOrChoosing";
+                    }
+                    else
+                    {
+                        contextKeyForPhase = "Panoramic";
+                    }
+                    break;
+
+                case GamePhase.GameEnd:
+                    // Mostly panoramic or a general end-game shot
+                    contextKeyForPhase = "GameEnd";
+                    break;
+
+                default:
+                    contextKeyForPhase = "Panoramic"; // Fallback for any unhandled phase
+                    break;
+            }
+            
+            TriggerSingleCameraSwitchWithContext(contextKeyForPhase, targetGuestForPhase);
+        }
+    }
+
+    /// <summary>
+    /// Activates a specific camera from a pool suitable for the given context (single switch).
     /// </summary>
     /// <param name="contextKey">A string indicating the context (e.g., "GuestSpeaking", "PlayerSpeakingOrChoosing").</param>
     /// <param name="currentGuest">The guest currently interacting, if applicable.</param>
-    private void ActivateRandomCameraWithContext(string contextKey, AIGuestProfile currentGuest = null)
+    private void TriggerSingleCameraSwitchWithContext(string contextKey, AIGuestProfile currentGuest = null)
     {
         if (dynamicCameraController == null)
         {
