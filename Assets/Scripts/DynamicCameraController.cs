@@ -79,22 +79,22 @@ public class DynamicCameraController : MonoBehaviour
         targetVCam.Priority = 10;
 
         // Handle dynamic targets for specific camera types
-        if (cameraType == VCamType.PlayerFocus || cameraType == VCamType.GuestFocus ||
-            cameraType == VCamType.OverShoulderPlayer || cameraType == VCamType.OverShoulderGuest)
+        if (targetTransform != null)
         {
-            if (targetTransform != null)
+            if (cameraType == VCamType.PlayerFocus || cameraType == VCamType.GuestFocus)
             {
+                targetVCam.Follow = targetTransform;
                 targetVCam.LookAt = targetTransform;
-                // For PlayerFocus/GuestFocus, also follow the target
-                if (cameraType == VCamType.PlayerFocus || cameraType == VCamType.GuestFocus)
-                {
-                    targetVCam.Follow = targetTransform;
-                }
             }
-            else
+            else if (cameraType == VCamType.OverShoulderPlayer || cameraType == VCamType.OverShoulderGuest)
             {
-                Debug.LogWarning($"Target transform is null for {cameraType} camera. Camera might not behave as expected.");
+                targetVCam.Follow = targetTransform;
+                // For OverShoulder cameras, LookAt is expected to be set by their dedicated SetOverShoulder...Targets methods.
             }
+        }
+        else
+        {
+            Debug.Log($"Target transform is null for {cameraType} camera. Camera might not behave as expected.");
         }
 
         Debug.Log($"Activated camera: {cameraType}");

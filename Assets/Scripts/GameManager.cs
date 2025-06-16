@@ -107,6 +107,7 @@ public class GameManager : MonoBehaviour
 
         // Start the player introduction process
         StartCoroutine(PlayerIntroductionSequence()); // New coroutine
+        AudioManager.Instance.PlayBGM("So Boring"); // Play BGM
     }
 
     void UpdateGuestUI()
@@ -260,11 +261,8 @@ public class GameManager : MonoBehaviour
             }
         }
         UpdateGuestUI(); // Update light indicators after all impressions
-        // After all impressions, return to player focus or panoramic
-        if (dynamicCameraController != null && currentPlayerProfile.modelTransform != null)
-        {
-            dynamicCameraController.ActivateCamera(VCamType.PlayerFocus, currentPlayerProfile.modelTransform);
-        }
+        // After all impressions, activate a random camera for player focus or panoramic
+        ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing");
     }
 
     private void ParseGuestImpressionResponse(string response, out string thought, out float adjustment)
@@ -332,11 +330,8 @@ public class GameManager : MonoBehaviour
             }
         }
 
-        // Activate player focus camera when it's the player's turn to input
-        if (dynamicCameraController != null && currentPlayerProfile.modelTransform != null)
-        {
-            dynamicCameraController.ActivateCamera(VCamType.PlayerFocus, currentPlayerProfile.modelTransform);
-        }
+        // Activate a random camera for player focus when it's the player's turn to input
+        ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing");
 
         await ProcessPlayerTurn(playerInputText);
     }
@@ -371,11 +366,8 @@ public class GameManager : MonoBehaviour
 
         UpdateGuestUI(); // Update guest UI for the new phase
 
-        // Activate panoramic camera for guest introductions
-        if (dynamicCameraController != null)
-        {
-            dynamicCameraController.ActivateCamera(VCamType.Panoramic);
-        }
+        // Activate a random camera for guest introductions
+        ActivateRandomCameraWithContext("PhaseTransitionGeneral");
 
         // Re-enable player input field for the LovesFirstImpression phase
         playerInputField.gameObject.SetActive(true);
@@ -391,6 +383,10 @@ public class GameManager : MonoBehaviour
         {
             if (guest.currentLightStatus != LightStatus.Off) // Only active guests respond
             {
+                // Activate a random camera focusing on the guest who is about to respond
+                ActivateRandomCameraWithContext("GuestSpeaking", guest);
+                await Task.Delay(2000); // Short delay for camera transition
+
                 string prompt = GeneratePromptForGuest(guest, playerInputText);
                 string aiResponse = await geminiService.GetGeminiResponse(prompt);
                 Debug.Log($"Raw AI Response for {guest.guestName}: {aiResponse}");
@@ -450,6 +446,7 @@ public class GameManager : MonoBehaviour
         currentPhase = GamePhase.LovesReassessment;
         phaseIndicatorText.text = "Phase: Love's Reassessment";
         dialogueText.text += "\n\n--- Phase Transition: Love's Reassessment --- \n\nPlayer, you can now interact further with the remaining guests.";
+        ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing"); // Return to player focus after phase transition
     }
 
     private async Task HandleLovesReassessment(string playerInputText)
@@ -459,12 +456,9 @@ public class GameManager : MonoBehaviour
         {
             if (guest.currentLightStatus != LightStatus.Off) // Only active guests respond
             {
-                // Focus on the guest who is about to respond
-                if (dynamicCameraController != null && guest.modelTransform != null)
-                {
-                    dynamicCameraController.ActivateCamera(VCamType.GuestFocus, guest.modelTransform);
-                    await Task.Delay(500); // Short delay for camera transition
-                }
+                // Activate a random camera focusing on the guest who is about to respond
+                ActivateRandomCameraWithContext("GuestSpeaking", guest);
+                await Task.Delay(2000); // Short delay for camera transition
 
                 string prompt = GeneratePromptForGuest(guest, playerInputText);
                 string aiResponse = await geminiService.GetGeminiResponse(prompt);
@@ -525,20 +519,14 @@ public class GameManager : MonoBehaviour
         phaseIndicatorText.text = "Phase: Love's Final Choice";
         dialogueText.text += "\n\n--- Phase Transition: Love's Final Choice --- \n\nPlayer, choose one of the remaining guests by typing their name, or type 'skip' for a smart recommendation.";
 
-        // Return to player focus after guest responses in Reassessment phase
-        if (dynamicCameraController != null && currentPlayerProfile.modelTransform != null)
-        {
-            dynamicCameraController.ActivateCamera(VCamType.PlayerFocus, currentPlayerProfile.modelTransform);
-        }
+        // Activate a random camera for player focus after guest responses in Reassessment phase
+        ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing");
     }
 
     private void HandleLovesFinalChoice(string playerInputText)
     {
-        // Focus on player as they make their choice
-        if (dynamicCameraController != null && currentPlayerProfile.modelTransform != null)
-        {
-            dynamicCameraController.ActivateCamera(VCamType.PlayerFocus, currentPlayerProfile.modelTransform);
-        }
+        // Activate a random camera for player focus as they make their choice
+        ActivateRandomCameraWithContext("PlayerSpeakingOrChoosing");
 
         if (playerInputText.ToLower() == "skip")
         {
@@ -610,11 +598,8 @@ public class GameManager : MonoBehaviour
             submitButton.gameObject.SetActive(false);
         }
 
-        // Activate panoramic camera or a specific end-game camera
-        if (dynamicCameraController != null)
-        {
-            dynamicCameraController.ActivateCamera(VCamType.Panoramic); // Or a dedicated GameEnd camera
-        }
+        // Activate a random camera for the end-game
+        ActivateRandomCameraWithContext("GameEnd");
     }
 
     private string GeneratePromptForGuest(AIGuestProfile guest, string playerInput)
@@ -647,5 +632,117 @@ public class GameManager : MonoBehaviour
         promptBuilder.AppendLine("For example: 'AffectionChange: 10.0', 'AffectionChange: -7.5', or 'AffectionChange: 0.0'.");
         
         return promptBuilder.ToString();
+    }
+
+    /// <summary>
+    /// Returns a list of suitable camera types based on the current game context.
+    /// </summary>
+    /// <param name="contextKey">A string indicating the context (e.g., "GuestSpeaking", "PlayerSpeakingOrChoosing", "PhaseTransitionGeneral", "GameEnd").</param>
+    /// <param name="currentGuest">The guest currently interacting, if applicable.</param>
+    /// <returns>A list of VCamType suitable for the context.</returns>
+    private List<VCamType> GetRandomCameraPool(string contextKey, AIGuestProfile currentGuest = null)
+    {
+        List<VCamType> pool = new List<VCamType>();
+
+        switch (contextKey)
+        {
+            case "GuestSpeaking":
+                pool.Add(VCamType.GuestFocus);
+                pool.Add(VCamType.OverShoulderPlayer); // Player's OTS looking at guest
+                pool.Add(VCamType.Panoramic);
+                // Add GroupShotActiveGuests if multiple guests are active and relevant
+                break;
+            case "PlayerSpeakingOrChoosing":
+                pool.Add(VCamType.PlayerFocus);
+                pool.Add(VCamType.OverShoulderGuest); // Guest's OTS looking at player
+                pool.Add(VCamType.Panoramic);
+                break;
+            case "PhaseTransitionGeneral":
+                pool.Add(VCamType.Panoramic);
+                pool.Add(VCamType.PlayerFocus); // Default to player focus during transitions if no other specific camera is needed
+                break;
+            case "GameEnd":
+                pool.Add(VCamType.Panoramic);
+                // Could add a specific "GameEnd" camera if one exists
+                break;
+            default:
+                pool.Add(VCamType.Panoramic); // Fallback
+                break;
+        }
+
+        // Filter out cameras if their required targets are null
+        if (currentPlayerProfile == null || currentPlayerProfile.modelTransform == null)
+        {
+            pool.Remove(VCamType.PlayerFocus);
+            pool.Remove(VCamType.OverShoulderGuest);
+        }
+        if (currentGuest == null || currentGuest.modelTransform == null)
+        {
+            pool.Remove(VCamType.GuestFocus);
+            pool.Remove(VCamType.OverShoulderPlayer);
+        }
+
+        // Ensure there's always at least one camera
+        if (pool.Count == 0)
+        {
+            pool.Add(VCamType.Panoramic);
+        }
+
+        return pool;
+    }
+
+    /// <summary>
+    /// Activates a random camera from a pool suitable for the given context.
+    /// </summary>
+    /// <param name="contextKey">A string indicating the context (e.g., "GuestSpeaking", "PlayerSpeakingOrChoosing").</param>
+    /// <param name="currentGuest">The guest currently interacting, if applicable.</param>
+    private void ActivateRandomCameraWithContext(string contextKey, AIGuestProfile currentGuest = null)
+    {
+        if (dynamicCameraController == null)
+        {
+            Debug.LogWarning("DynamicCameraController is not assigned. Cannot activate camera.");
+            return;
+        }
+
+        List<VCamType> cameraPool = GetRandomCameraPool(contextKey, currentGuest);
+        VCamType selectedCameraType = cameraPool[Random.Range(0, cameraPool.Count)];
+
+        Transform primaryTarget = null; // For Follow
+        Transform secondaryTarget = null; // For LookAt (especially for OTS)
+
+        switch (selectedCameraType)
+        {
+            case VCamType.PlayerFocus:
+                primaryTarget = currentPlayerProfile?.modelTransform;
+                break;
+            case VCamType.GuestFocus:
+                primaryTarget = currentGuest?.modelTransform;
+                break;
+            case VCamType.OverShoulderPlayer:
+                primaryTarget = currentPlayerProfile?.modelTransform;
+                secondaryTarget = currentGuest?.modelTransform; // Player looking at guest
+                if (primaryTarget != null && secondaryTarget != null)
+                {
+                    dynamicCameraController.SetOverShoulderPlayerTargets(primaryTarget, secondaryTarget);
+                }
+                break;
+            case VCamType.OverShoulderGuest:
+                primaryTarget = currentGuest?.modelTransform;
+                secondaryTarget = currentPlayerProfile?.modelTransform; // Guest looking at player
+                if (primaryTarget != null && secondaryTarget != null)
+                {
+                    dynamicCameraController.SetOverShoulderGuestTargets(primaryTarget, secondaryTarget);
+                }
+                break;
+            case VCamType.Panoramic:
+            case VCamType.StaticOpening: // Should only be used at start, but included for completeness
+            case VCamType.GroupShotActiveGuests:
+                // These cameras typically don't need a specific Follow/LookAt target set via ActivateCamera
+                break;
+        }
+
+        // If an OTS camera was selected, its targets are already set.
+        // For other cameras, pass the primary target to ActivateCamera.
+        dynamicCameraController.ActivateCamera(selectedCameraType, primaryTarget);
     }
 }
